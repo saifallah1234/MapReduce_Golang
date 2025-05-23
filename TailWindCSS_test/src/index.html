@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MapReduce Dashboard</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-black text-gray-100 min-h-screen p-6 font-sans">
+  <div class="container mx-auto">
+    <h1 class="text-2xl font-medium mb-6 text-gray-300">MapReduce Dashboard</h1>
+
+<!-- Side‑by‑side Workers & Tasks -->
+<div class="flex gap-4 mb-6">
+  <!-- Workers (25% width) -->
+  <div class="w-1/4 border border-gray-800 rounded-lg overflow-hidden flex flex-col">
+    <h2 class="px-4 py-3 bg-gray-900 text-gray-400 font-medium">Workers Status</h2>
+    <!-- FIXED height, scroll inside -->
+    <div class="h-60 overflow-y-auto">
+      <table id="workersTable" class="w-full">
+        <thead class="bg-gray-900">
+          <tr>
+            <th class="px-4 py-3 text-left text-gray-400">Worker</th>
+            <th class="px-4 py-3 text-left text-gray-400">Status</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Tasks (75% width) -->
+  <div class="flex-1 border border-gray-800 rounded-lg overflow-hidden flex flex-col">
+    <h2 class="px-4 py-3 bg-gray-900 text-gray-400 font-medium">Tasks Status</h2>
+    <div class="h-60 overflow-y-auto">
+      <table id="tasksTable" class="w-full">
+        <thead class="bg-gray-900">
+          <tr>
+            <th class="px-4 py-3 text-left text-gray-400">Task</th>
+            <th class="px-4 py-3 text-left text-gray-400">Start</th>
+            <th class="px-4 py-3 text-left text-gray-400">End</th>
+            <th class="px-4 py-3 text-left text-gray-400">Worker ID</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+
+
+    <div class="grid gap-4">
+      <!-- ResultReduce Table -->
+      <div class="border border-gray-800 rounded-lg overflow-hidden">
+        <h2 class="px-4 py-3 bg-gray-900 text-gray-400 font-medium">Reduce Result</h2>
+        <div id="output" class="max-h-96 overflow-auto"></div>
+      </div>
+
+      <!-- Chart_Of_TOP5 -->
+      <div class="border border-gray-800 rounded-lg overflow-hidden">
+        <h2 class="px-4 py-3 bg-gray-900 text-gray-400 font-medium">Top 5 Keys</h2>
+        <div class="p-4 bg-black">
+          <canvas id="barChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  let myChart;
+  async function loadData() {
+    const resp = await fetch('/data');
+    const data = await resp.json();
+    const resp_red = await fetch('/reducefile');
+    const rawData = await resp_red.json();
+    const tasks = data.tasks;
+    const users = data.users;
+
+    const tasksBody = document.querySelector('#tasksTable tbody');
+tasksBody.innerHTML = '';
+for (const key in tasks) {
+    const task = tasks[key] || {};
+    const isMapTask = key.toLowerCase().startsWith('map');
+    const isReduceTask = key.toLowerCase().startsWith('reduce');
+
+    tasksBody.innerHTML += `
+    <tr class="${isMapTask ? 'bg-green-900/30' : ''} ${isReduceTask ? 'bg-red-900/30' : ''} hover:bg-gray-900">
+        <td class="px-4 py-2 font-medium ${isMapTask ? 'text-green-300' : 'text-red-300'}">
+            ${key}
+        </td>
+        <td class="px-4 py-2">${task.start ?? 'N/A'}</td>
+        <td class="px-4 py-2">${task.end ?? 'N/A'}</td>
+        <td class="px-4 py-2">${task.workerId ?? 'N/A'}</td>
+    </tr>`;
+}
+
+
+    // Update workers table
+      const workersBody = document.querySelector('#workersTable tbody');
+      workersBody.innerHTML = '';
+      Object.entries(users).forEach(([workerId, status]) => {
+          workersBody.innerHTML += `
+          <tr class="hover:bg-gray-900">
+              <td class="px-4 py-2">${workerId}</td>
+              <td class="px-4 py-2 ${status === 'Waiting' ? 'text-green-400' : 'text-red-400'}">${status}</td>
+          </tr>`;
+      });
+
+    const data_dec = rawData.map(item => JSON.parse(item));
+
+    const container = document.getElementById('output');
+    container.innerHTML = `
+      <table class="min-w-full divide-y divide-gray-700">
+        <thead>
+          <tr>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Key</th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Value</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-700">
+          ${data_dec.map(({Key, Value}) => `
+            <tr>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${Key.replace(/\\r\\n/g, '\n')}</td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">${Value}</td>
+            </tr>`
+          ).join('')}
+        </tbody>
+      </table>`;
+
+    data_dec.sort((a, b) => Number(b.Value) - Number(a.Value));
+    const top5 = data_dec.slice(0, 5);
+    const labels = top5.map(item => item.Key.replace(/\\r\\n/g, '\n'));
+    const values = top5.map(item => Number(item.Value));
+
+    const ctx = document.getElementById('barChart').getContext('2d');
+
+    if (myChart) {
+      myChart.data.labels = labels;
+      myChart.data.datasets[0].data = values;
+      myChart.update();
+    }
+
+    myChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Key Values',
+          data: values,
+          backgroundColor: '#C5832B',
+          borderColor: '#101314',
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: {
+            beginAtZero: true,
+            grid: { color: '#1F2937' },
+            ticks: { color: '#9CA3AF' }
+          },
+          x: {
+            grid: { display: false },
+            ticks: { color: '#9CA3AF' }
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { enabled: true }
+        }
+      }
+    });
+  }
+
+  setInterval(loadData, 200);
+  loadData();
+</script>
+</body>
+</html>
